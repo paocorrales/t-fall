@@ -1,0 +1,54 @@
+---
+title: "Untitled"
+format: html
+editor: visual
+---
+
+```{r}
+read_data <- function() {
+  # Lee los datos y los combina
+  files <- list.files(here::here("datos"), full.names = TRUE, pattern = ".txt") 
+  datos <- lapply(files, data.table::fread, na.strings = "-99.9")
+  
+  data <- data.table::rbindlist(datos)[, date := as.Date(date)]
+  data <- data.table::as.data.table(tidyr::complete(data, station_id, date))[]
+  
+  return(data)
+}
+
+read_metadata <- function() {
+  # Lee los metadatos de estación
+  datos <- data.table::fread(here::here("datos", "METADATA_1960-2012.csv"))
+  datos[, .(station_id, name, lon, lat, elev)]
+}
+```
+
+```{r}
+claris <- read_data() 
+
+meta <- read_metadata()
+```
+
+```{r}
+claris[, let(delta_t = tmax - shift(tmax, n = 1)), by = station_id] |> 
+  # _[]
+  _[, let(t_fall = delta_t <= -10)]
+
+claris |> 
+  _[, .(n_front = sum(t_fall, na.rm = TRUE)), by = .(year(date), station_id)] |>
+  ggplot(aes(year, n_front)) +
+  geom_line(aes(group = station_id))
+
+
+claris |> 
+  _[, .(n_front = sum(t_fall, na.rm = TRUE)), by = .(year(date), station_id)] |> 
+  _[, .(mean_front = mean(n_front)), by = station_id] |> 
+  meta[i = _, on = "station_id"] |> 
+  ggplot(aes(lon, lat)) +
+  geom_point(aes(color = mean_front)) +
+  scale_color_viridis_c() +
+  geom_sf(data = arg, inherit.aes = FALSE, fill = NA) +
+  labs(x = NULL, y = NULL) +
+  theme_minimal()
+```
+
