@@ -1,0 +1,36 @@
+---
+title: "Temperature fall in Argentina"
+format: html
+editor: visual
+---
+
+```{r}
+library(siga)
+library(data.table)
+library(ggplot2)
+```
+
+## Selecting surface stations
+
+```{r}
+estaciones <- siga_estaciones(archivo = "data/lista_estaciones.csv")
+
+emc <- estaciones |> 
+  setDT() |> 
+  _[tipo == "Convencional Instr. Completo", id]
+
+siga_descargar(emc, dir = "data/")
+
+arg <- rnaturalearth::ne_countries(country = "Argentina", return = "sf")
+estaciones |> 
+  setDT() |> 
+  _[tipo == "Convencional Instr. Completo"] |> 
+  ggplot(aes(lon, lat)) +
+  geom_point()
+```
+
+```{r}
+purrr::map(Sys.glob("data/NH*.csv")[1:15], fread) |> 
+  rbindlist()
+```
+
