@@ -17,20 +17,84 @@ estaciones <- siga_estaciones(archivo = "data/lista_estaciones.csv")
 
 emc <- estaciones |> 
   setDT() |> 
-  _[tipo == "Convencional Instr. Completo", id]
+  _[tipo == "Convencional Instr. Completo"] |> 
+  _[, id]
 
-siga_descargar(emc, dir = "data/")
+# siga_descargar(emc, dir = "data/")
 
 arg <- rnaturalearth::ne_countries(country = "Argentina", return = "sf")
+
 estaciones |> 
   setDT() |> 
   _[tipo == "Convencional Instr. Completo"] |> 
   ggplot(aes(lon, lat)) +
-  geom_point()
+  geom_point() +
+  geom_sf(data = arg, inherit.aes = FALSE, fill = NA) +
+  labs(x = NULL, y = NULL) +
+  theme_minimal()
+```
+
+```{r message=FALSE, warning=FALSE}
+file_list <- Sys.glob(paste0("data/", emc, ".csv"))
+
+obs <- purrr::map(file_list, function(f) {
+  
+  message(f)
+  readr::read_csv(f, show_col_types = FALSE) |> 
+    setDT() |> 
+    _[, .(id, fecha, temperatura_abrigo_150cm)]
+  
+  }) |> 
+  rbindlist()
+
+obs[, .(n_na = sum(is.na(temperatura_abrigo_150cm)),
+        n = .N), by = id]
 ```
 
 ```{r}
-purrr::map(Sys.glob("data/NH*.csv")[1:15], fread) |> 
-  rbindlist()
+obs[, let(delta_t = temperatura_abrigo_150cm - shift(temperatura_abrigo_150cm, n = 1)), by = id] |> 
+  # _[]
+  _[, let(t_fall = delta_t <= -10)]
+
+obs |> 
+  _[, .(n_front = sum(t_fall, na.rm = TRUE)), by = .(year(fecha), id)] |> 
+  ggplot(aes(year, n_front)) +
+  geom_line(aes(group = id))
+
+
+obs |> 
+  _[, .(n_front = sum(t_fall, na.rm = TRUE)), by = .(year(fecha), id)] |> 
+  _[, .(mean_front = mean(n_front)), by = id] |> 
+  estaciones[i = _, on = "id"] |> 
+  ggplot(aes(lon, lat)) +
+  geom_point(aes(color = mean_front)) +
+  scale_color_viridis_c() +
+  geom_sf(data = arg, inherit.aes = FALSE, fill = NA) +
+  labs(x = NULL, y = NULL) +
+  theme_minimal()
 ```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
