@@ -4,6 +4,13 @@ format: html
 editor: visual
 ---
 
+
+```{r}
+library(siga)
+library(data.table)
+library(ggplot2)
+```
+
 ```{r}
 read_data <- function() {
   # Lee los datos y los combina
@@ -27,6 +34,8 @@ read_metadata <- function() {
 claris <- read_data() 
 
 meta <- read_metadata()
+
+arg <- rnaturalearth::ne_countries(country = c("Argentina", "Paraguay"), return = "sf")
 ```
 
 ```{r}
@@ -34,10 +43,35 @@ claris[, let(delta_t = tmax - shift(tmax, n = 1)), by = station_id] |>
   # _[]
   _[, let(t_fall = delta_t <= -10)]
 
+claris[, .(na = sum(is.na(t_fall))/.N), by = station_id] |> 
+    meta[i = _, on = "station_id"] |> 
+  ggplot(aes(lon, lat)) +
+  geom_point(aes(color = na*100), alpha = 0.5) +
+  geom_point(data = ~.x[na*100 > 5], shape = 21, fill = NA) +
+  scale_color_viridis_c( guide = guide_colorbar(barwidth = 0.5,
+                                               barheigh = 15)) +
+  geom_sf(data = arg, inherit.aes = FALSE, fill = NA) +
+  labs(x = NULL, y = NULL, color = NULL) +
+  theme_minimal()
+
+claris |> 
+  ggplot(aes(date, factor(station_id))) +
+  geom_tile(aes(fill = is.na(t_fall))) +
+  scale_fill_manual(values = c("black", "grey")) +
+  labs(y = "Station ID", fill = "Is NA?") +
+  theme_minimal()
+```
+
+
+```{r}
 claris |> 
   _[, .(n_front = sum(t_fall, na.rm = TRUE)), by = .(year(date), station_id)] |>
   ggplot(aes(year, n_front)) +
   geom_line(aes(group = station_id))
+```
+
+
+```{r}
 
 
 claris |> 
@@ -46,9 +80,57 @@ claris |>
   meta[i = _, on = "station_id"] |> 
   ggplot(aes(lon, lat)) +
   geom_point(aes(color = mean_front)) +
-  scale_color_viridis_c() +
+  scale_color_viridis_c(breaks = seq(1, 30, 1), guide = guide_colorbar(barwidth = 0.5,
+                                               barheigh = 15)) +
   geom_sf(data = arg, inherit.aes = FALSE, fill = NA) +
-  labs(x = NULL, y = NULL) +
+  labs(x = NULL, y = NULL, title = "Mean days per year", color = NULL) +
   theme_minimal()
 ```
+```{r}
+claris |> 
+  _[delta_t < 0] |> 
+  ggplot(aes(delta_t)) +
+  geom_histogram(binwidth = 0.5)
+
+claris |> 
+  _[, .(p95 = quantile(delta_t, 0.02, na.rm = TRUE)), by = station_id] |> 
+   meta[i = _, on = "station_id"] |> 
+  ggplot(aes(lon, lat)) +
+  geom_point(aes(color = p95)) +
+  scale_color_viridis_c(breaks = seq(-12, -5, 1), guide = guide_colorbar(barwidth = 0.5,
+                                               barheigh = 15)) +
+  geom_sf(data = arg, inherit.aes = FALSE, fill = NA) +
+  labs(x = NULL, y = NULL, title = "p98 threshold", color = NULL) +
+  theme_minimal()
+
+
+```
+
+```{r}
+claris_eof <- claris |> 
+  _[, let(delta_t = fifelse(is.na(delta_t), 0, delta_t))] |> 
+  metR::EOF(delta_t ~ date | station_id, n = 1:5, data = _)
+
+
+claris_eof$right |> 
+  _[, .SD[which.max(delta_t), ], by = station_id] |> 
+   meta[i = _, on = "station_id"] |> 
+  ggplot(aes(lon, lat)) +
+  geom_point(aes(color = PC)) +
+  scale_color_viridis_d() +
+  geom_sf(data = arg, inherit.aes = FALSE, fill = NA) +
+  labs(x = NULL, y = NULL, title = "Mean days per year", color = NULL) +
+  theme_minimal()
+```
+
+
+
+
+
+
+
+
+
+
+
 
