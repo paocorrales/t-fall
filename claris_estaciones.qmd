@@ -70,6 +70,23 @@ claris |>
   geom_line(aes(group = station_id))
 ```
 
+```{r}
+ids <- claris |> 
+  _[, .(n_front = sum(t_fall, na.rm = TRUE)), by = .(year(date), station_id)] |> 
+  _[, .(mean_front = mean(n_front)), by = station_id] |> 
+  meta[i = _, on = "station_id"] |> 
+  _[mean_front >= 6, station_id]
+
+claris[station_id %in% ids] |> 
+  _[, .(n_front = sum(t_fall, na.rm = TRUE)), by = .(year(date), station_id)] |>
+  _[, let(n_front_mean = frollmean(n_front, 5, align = "center")), by = station_id] |>
+  ggplot(aes(year, n_front)) +
+  geom_line(aes(group = station_id)) +
+  geom_line(aes(y = n_front_mean), color = "orange") +
+  facet_wrap(~station_id) +
+  labs(x = NULL, y = "Number of t falls") +
+  theme_minimal()
+```
 
 ```{r}
 
@@ -80,7 +97,7 @@ claris |>
   meta[i = _, on = "station_id"] |> 
   ggplot(aes(lon, lat)) +
   geom_point(aes(color = mean_front)) +
-  scale_color_viridis_c(breaks = seq(1, 30, 1), guide = guide_colorbar(barwidth = 0.5,
+  scale_color_viridis_c(breaks = seq(1, 9, 1), guide = guide_colorbar(barwidth = 0.5,
                                                barheigh = 15)) +
   geom_sf(data = arg, inherit.aes = FALSE, fill = NA) +
   labs(x = NULL, y = NULL, title = "Mean days per year", color = NULL) +
@@ -124,6 +141,18 @@ claris_eof$right |>
 ```
 
 
+```{r}
+claris |> 
+  # _[, let(pr_mean = mean(pr, na.rm = TRUE)), 
+  #   by = .(station_id, day(date), month(date))] |> 
+  # _[, let(pr_anom = pr - pr_mean)] |> 
+  _[, .SD[pr > 0, .(p95 = quantile(pr, probs = 0.99))], by = station_id] |> 
+  _[claris, on = .NATURAL] |> 
+  _[, match := pr > p95] |> 
+  # _[delta_t < -10] |> 
+  ggplot(aes(delta_t, pr_anom)) +
+  geom_point(aes(color = match), alpha = 0.2)
+```
 
 
 
