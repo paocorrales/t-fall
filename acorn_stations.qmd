@@ -1,0 +1,123 @@
+---
+title: "ACORN-DAT data"
+format: html
+---
+
+```{r setup}
+
+library(data.table)
+library(ggplot2)
+library(metR)
+
+file_list <- Sys.glob("acorn_sat_v2.5.0_daily_tmax/tmax*")
+
+obs <- purrr::map(file_list, function(f) {
+  
+  fread(f) |> 
+    janitor::clean_names() |> 
+    setnames("maximum_temperature_deg_c", "tmax") |> 
+    _[, let(site_number = site_number[1],
+            site_name = site_name[1])] |>
+    _[!is.na(date)] |> 
+    _[, site_name := NULL]
+  
+}) |> 
+  rbindlist()
+
+metadata <- fread("acorn_sat_v2.5.0_daily_tmax/metadata.csv") |> 
+  janitor::clean_names() |> 
+  setnames("number", "site_number")
+
+aus <- rnaturalearth::ne_states(country = "Australia", returnclass = "sf")
+```
+
+```{r}
+obs |> 
+  _[, let(delta_t = tmax - shift(tmax, n = 1)), by = site_number] |>
+  _[, let(t_fall = delta_t <= -10)] |> 
+  metadata[i = _, on = .NATURAL]
+```
+
+```{r}
+obs |> 
+  _[, .(n_front = sum(t_fall, na.rm = TRUE)), by = .(year(date), site_number)] |> 
+  _[, .(mean_front = mean(n_front)), by = site_number] |> 
+  metadata[i = _, on = "site_number"] |>
+  _[latitude < -20] |>
+  ggplot(aes(longitude, latitude)) +
+  geom_contour_fill(aes(z = mean_front), kriging = 150, clip = aus, breaks = seq(-1, 20, 1)) +
+  geom_point(aes(fill = mean_front), shape = 21) +
+  scale_color_viridis_c(guide = guide_colorbar(barwidth = 0.5,
+                                               barheigh = 15), direction = -1) +
+  scale_fill_viridis_c(guide = guide_colorbar(barwidth = 0.5,
+                                              barheigh = 15), direction = -1) +
+  geom_sf(data = aus, inherit.aes = FALSE, fill = NA) +
+  coord_sf(ylim = c(-45, -8)) +
+  labs(x = NULL, y = NULL, title = "Mean annual occurrence of falls in daily maximum \ntemperature of at least 10 K", 
+       fill = NULL) +
+  theme_minimal()
+```
+
+```{r}
+
+Pvaluate <- function(estimate, std.error, df, adjustment = "none") {
+  stats::p.adjust(2*stats::pt(abs(estimate)/std.error, df, lower.tail = FALSE), method = adjustment)
+}
+
+obs[month(date) %in% c(10, 11, 12, 1, 2, 3)] |> 
+  _[, .(n_front = sum(t_fall, na.rm = TRUE)), by = .(year(date), site_number)] |> 
+  _[, metR::FitLm(n_front, year, se = TRUE), by = site_number] |> 
+  _[term != "(Intercept)"] |> 
+  _[, let(p.value = Pvaluate(estimate, std.error, df)), by = site_number] |> 
+  _[] |> 
+  metadata[i = _, on = "site_number"] |>
+  _[latitude < -20] |>
+  ggplot(aes(longitude, latitude)) +
+  # geom_contour_fill(aes(z = mean_front), kriging = 150, clip = aus, breaks = seq(-1, 20, 1)) +
+  geom_point(aes(color = estimate)) +
+  geom_point(data = ~.x[p.value < 0.05], shape = 21) +
+  # scale_color_viridis_c(guide = guide_colorbar(barwidth = 0.5,
+  #                                              barheigh = 15), direction = -1) +
+  scale_color_divergent(low = scales::muted("red"),
+                       mid = "white",
+                       high = scales::muted("blue"),
+                       guide = guide_colorbar(barwidth = 0.5,
+                                              barheigh = 15)) +
+  geom_sf(data = aus, inherit.aes = FALSE, fill = NA) +
+  coord_sf(ylim = c(-45, -8)) +
+  labs(x = NULL, y = NULL, title = "Trend on ONDJFM of temperature falls", 
+       color = NULL) +
+  theme_minimal()
+```
+
+```{r}
+
+stations <- metadata[station_name %in% c("Mount Gambier", "Wagga Wagga", "Sydney", "Melbourne"), site_number]
+
+obs[site_number %in% stations] |> 
+  _[, .(n_front = sum(t_fall, na.rm = TRUE)), by = .(year(date), site_number)] |> 
+  metadata[i = _, on = "site_number"] |>
+  _[, let(n_front_mean = frollmean(n_front, 5, align = "center"))] |> 
+  _[, station_name := forcats::fct_relevel(station_name, c("Mount Gambier", "Wagga Wagga", "Sydney", "Melbourne"))] |> 
+  ggplot(aes(year, n_front)) +
+  geom_line(color = "steelblue") +
+  geom_line(aes(y = n_front_mean)) +
+  geom_smooth(method = "lm", se = FALSE, color = "red", linewidth = 0.5) +
+  facet_wrap(~station_name) +
+  labs(x = NULL, y = "Number of temperature falls") +
+  theme_minimal()
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
