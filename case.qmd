@@ -1,0 +1,103 @@
+---
+title: "Feb 13th event"
+format: html
+---
+
+```{r}
+library(metR)
+library(data.table)
+library(ggplot2)
+
+stations_vic <- c(80023, 87031, 86338, 76031, 78015, 84145, 82039, 85072, 85096)
+
+file_list <- Sys.glob(paste0("acorn_sat_v2.5.0_daily_tmax/tmax.0", stations_vic, "*"))
+
+obs_vic <- purrr::map(file_list, function(f) {
+  
+  fread(f) |> 
+    janitor::clean_names() |> 
+    setnames("maximum_temperature_deg_c", "tmax") |> 
+    _[, let(site_number = site_number[1],
+            site_name = site_name[1])] |>
+    _[!is.na(date)] |> 
+    _[, site_name := NULL]
+  
+}) |> 
+  rbindlist() |>
+  _[, let(delta_t = tmax - shift(tmax, n = 1)), by = site_number] |>
+  _[, let(t_fall = delta_t <= -10)] 
+```
+
+
+```{r}
+source("read_pp.R")
+
+pp <- read_pp()
+
+obs_vic <- obs_vic |> 
+  _[, date := date + lubridate::day(1)] |> 
+  pp[i = _, on = c("date", "site_number")]
+
+pp_feb <- pp |>
+  _[year == 2024 & month == 2 & day == 14] |> 
+  metadata[i = _, on = "site_number"] 
+
+vic <- aus |> dplyr::filter(name == "Victoria")
+
+points <- sf::st_as_sf(metadata,  coords = c("longitude", "latitude"))
+st_crs(points) <- 4326
+
+stations_vic <- sf::st_filter(points, vic)
+stations_vic |> 
+ggplot() +
+  geom_sf() +
+  geom_sf(data = vic, fill = NA) +
+  geom_point(data = pp_feb, aes(longitude, latitude, color = pp, size = pp)) +
+  ggrepel::geom_label_repel(data = pp_feb, aes(longitude, latitude, label = paste0(station_name, " - pp: ", pp))) +
+  labs(x = NULL, y = NULL) +
+  theme_minimal()
+```
+
+
+```{r}
+imerg <- ReadNetCDF("~/Downloads/3B-DAY.MS.MRG.3IMERG.20240213-S000000-E235959.V07B.nc")
+
+aus <- rnaturalearth::ne_states(country = "Australia", returnclass = "sf")
+
+imerg |> 
+  ggplot(aes(lon, lat)) +
+  geom_contour_fill(aes(z = precipitation, fill = after_stat(level)), breaks = seq(1, 140, 10)) +
+  geom_sf(data = aus, inherit.aes = FALSE, fill = NA) +
+  scale_fill_viridis_d(direction = -1, option = "G", guide = guide_colorsteps(barwidth = 25,
+                                                                                barheigh = 0.5)) +
+  coord_sf(ylim = c(-45, -10), xlim = c(110, 155)) +
+  labs(x = NULL, y = NULL, fill = "daily pp") +
+  theme_minimal()  +
+  theme(legend.position = "bottom")
+```
+
+```{r}
+imerg |> 
+  _[lon %between% c(141, 150) & lat %between% c(-40, -34)] |> 
+  ggplot(aes(lon, lat)) +
+  geom_contour_fill(aes(z = precipitation, fill = after_stat(level)), breaks = c(seq(1, 20, 2), 50)) +
+  geom_sf(data = vic, inherit.aes = FALSE, fill = NA) +
+   scale_fill_viridis_d(direction = -1, option = "G", guide = guide_colorsteps(barwidth = 25,
+                                                                                barheigh = 0.5)) +
+  # coord_sf(ylim = c(-38.7, -37.5), xlim = c(144, 146)) +
+  geom_sf(data = sf::st_as_sf(metadata,  coords = c("longitude", "latitude"), crs = st_crs(4326)) |> 
+                                 sf::st_filter(vic), inherit.aes = FALSE, size = 0.8) +
+  labs(x = NULL, y = NULL, fill = "daily pp",
+       subtitle = "February 13th") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+
+
+
+
+
+
+
+
