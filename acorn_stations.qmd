@@ -8,6 +8,7 @@ format: html
 library(data.table)
 library(ggplot2)
 library(metR)
+library(sf)
 
 file_list <- Sys.glob("acorn_sat_v2.5.0_daily_tmax/tmax*")
 
@@ -22,21 +23,22 @@ obs <- purrr::map(file_list, function(f) {
     _[, site_name := NULL]
   
 }) |> 
-  rbindlist()
+  rbindlist() |>
+  _[, let(delta_t = tmax - shift(tmax, n = 1)), by = site_number] |>
+  _[, let(t_fall = delta_t <= -10)] 
 
 metadata <- fread("acorn_sat_v2.5.0_daily_tmax/metadata.csv") |> 
   janitor::clean_names() |> 
   setnames("number", "site_number")
 
+file_list <- Sys.glob(paste0("daily_pp/HD01D_Data_", formatC(metadata$site_number, width = 6, flag = "0"), "*"))
+
+pp_obs <- purrr::map(file_list, fread) |> rbindlist()
+
 aus <- rnaturalearth::ne_states(country = "Australia", returnclass = "sf")
 ```
 
-```{r}
-obs |> 
-  _[, let(delta_t = tmax - shift(tmax, n = 1)), by = site_number] |>
-  _[, let(t_fall = delta_t <= -10)] |> 
-  metadata[i = _, on = .NATURAL]
-```
+
 
 ```{r}
 obs |> 
@@ -109,14 +111,351 @@ obs[site_number %in% stations] |>
 ```
 
 
+```{r}
+rbind(
+obs[site_number %in% stations] |> 
+  _[, .(n_front = sum(t_fall, na.rm = TRUE)), by = .(year(date), site_number)] |> 
+  metadata[i = _, on = "site_number"] |>
+  _[, let(n_front_mean = frollmean(n_front, 5, align = "center"))] |> 
+  _[site_number == 26021, .(site_number, year, n_front)] |> 
+  _[, version := "v2.5"],
+
+mount_gambier <- fread("~/acorn_sat_v2.1.0_daily_tmax/tmax.026021.daily.csv") |> 
+      janitor::clean_names() |> 
+    setnames("maximum_temperature_deg_c", "tmax") |> 
+    _[, let(site_number = site_number[1],
+            site_name = site_name[1])] |>
+    _[!is.na(date)] |> 
+    _[, site_name := NULL] |> 
+    _[, let(delta_t = tmax - shift(tmax, n = 1)), by = site_number] |>
+  _[, let(t_fall = delta_t <= -10)] |> 
+  _[, .(n_front = sum(t_fall, na.rm = TRUE)), by = .(year(date), site_number)] |> 
+  _[, version := "v2.1"]
+) |> 
+metadata[i = _, on = .NATURAL] |> 
+    _[, let(n_front_mean = frollmean(n_front, 5, align = "center")), by = version] |> 
+  ggplot(aes(year, n_front)) +
+  geom_line(color = "steelblue", aes(linetype = version)) +
+  # geom_line(aes(y = n_front_mean)) +
+  geom_smooth(method = "lm", se = FALSE, color = "red", linewidth = 0.5, aes(linetype = version)) +
+  # facet_wrap(~version, nrow = 2) +
+  labs(x = NULL, y = "Number of temperature falls", 
+       title = "Changes for Mount Gambier station") +
+  theme_minimal()
+```
+
+## T-falls + precipitation
+### VIC
+
+```{r}
+vic <- aus |> dplyr::filter(name == "Victoria")
+
+points <- sf::st_as_sf(metadata,  coords = c("longitude", "latitude"))
+st_crs(points) <- 4326
+
+stations_vic <- sf::st_filter(points, vic)
+stations_vic |> 
+ggplot() +
+  geom_sf() +
+  geom_sf_label(aes(label = site_number), nudge_x = runif(9)) +
+  geom_sf(data = vic, fill = NA)
+```
+
+```{r}
+source("read_pp.R")
+
+pp <- read_pp()
+obs_vic <- obs[site_number %in% stations_vic$site_number]
+
+obs_vic <- obs_vic |> 
+  _[, date := date + lubridate::day(1)] |> 
+  pp[i = _, on = c("date", "site_number")]
+
+# obs_vic <- pp[obs_vic, on = c("date", "site_number")]
 
 
+enso <- rsoi::download_oni(use_cache = TRUE) |> 
+  as.data.table() |> 
+  _[,.(date = as_date(Date), oni = dSST3.4)] 
+```
+
+```{r}
+obs_vic |> 
+  metadata[i = _, on = .NATURAL] |> 
+  ggplot(aes(delta_t, pp)) +
+  geom_point(alpha = 0.1, size = 0.5) +
+  geom_vline(xintercept = 0, color = "steelblue") +
+  geom_vline(xintercept = -10, color = "steelblue", linetype = 2) +
+  facet_wrap(~station_name) +
+  labs(x = "T fall", y = "Precipitation") +
+  theme_minimal()
+```
 
 
+```{r}
+obs_vic |> 
+  metadata[i = _, on = .NATURAL] |> 
+  _[!is.na(month)] |> 
+  ggplot(aes(delta_t, pp)) +
+  geom_point(alpha = 0.1, size = 0.5) +
+  geom_vline(xintercept = 0, color = "steelblue") +
+  geom_vline(xintercept = -10, color = "steelblue", linetype = 2) +
+  facet_wrap(~month) +
+  labs(x = "T fall", y = "Precipitation") +
+  theme_minimal()
+```
+
+```{r}
+obs_vic |> 
+  metadata[i = _, on = .NATURAL] |> 
+  _[month %in% c(10, 11, 12, 1, 2, 3)] |> 
+  ggplot(aes(delta_t, pp)) +
+  geom_smooth() +
+  # geom_point(alpha = 0.1, size = 0.5) +
+  geom_vline(xintercept = 0, color = "steelblue") +
+  geom_vline(xintercept = -10, color = "steelblue", linetype = 2) +
+  facet_wrap(~station_name) +
+  labs(x = "T fall", y = "Precipitation") +
+  theme_minimal()
+```
+
+```{r}
+cut_round <- function(x, breaks) {
+
+  labels <- na.omit((breaks + data.table::shift(breaks, -1))/2)
+  cuts <- cut(x, breaks = breaks, labels = labels)
+
+  as.numeric(as.character(cuts))
+}
+
+obs_vic |> 
+  metadata[i = _, on = .NATURAL] |> 
+  _[month %in% c(10, 11, 12, 1, 2, 3)] |> 
+  _[, delta_td := cut_round(delta_t, breaks = seq(-30, 25, 5))] |> 
+  _[, .(mean_pp = mean(pp, na.rm = TRUE)), by = .(station_name, delta_td)] |> 
+  ggplot(aes(delta_td, mean_pp)) +
+  geom_col() +
+  # geom_point(alpha = 0.1, size = 0.5) +
+  geom_vline(xintercept = 0, color = "steelblue") +
+  geom_vline(xintercept = -10, color = "steelblue", linetype = 2) +
+  facet_wrap(~station_name) +
+  labs(x = "T fall", y = "Precipitation") +
+  theme_minimal()
+```
+
+Enso relationship?
+
+```{r}
+# obs_vic |> 
+#   enso[i = _, on = "date"] |>
+#   # _[!is.na(oni)]
+#   _[, oni := nafill(oni, "locf"), by = site_number] |> 
+#   _[delta_t <= -10] |>
+#   ggplot(aes(delta_t, pp)) +
+#   geom_point(aes(color = oni)) +
+#   scale_colour_divergent() +
+#   scale_y_log10() +
+#   geom_smooth() +
+#   facet_wrap(~site_number)
+
+obs_vic |> 
+  enso[i = _, on = "date"] |>
+  _[, oni := nafill(oni, "locf"), by = site_number] |> 
+  _[, oni_d := fcase(oni > 0.5, "Niño",
+                     oni < -0.5, "Niña",
+                     oni < 0.5 & oni > -0.5, "Neutro",
+                     default = NA)] |> 
+  _[, oni_d := forcats::fct_relevel(oni_d, c("Niño", "Neutro", "Niña"))] |> 
+  _[, pp_yes := pp > 0] |> 
+  # _[]
+  _[, .(n_pp = mean(pp, na.rm = TRUE)), by = .(oni_d, t_fall, site_number)] |>
+  # _[]
+  _[!is.na(t_fall) & !is.na(oni_d)] |>
+  metadata[i = _, on = .NATURAL] |> 
+  ggplot(aes(t_fall, oni_d)) +
+  geom_tile(aes(fill = n_pp)) +
+  # scale_fill_viridis_c() +
+  scale_fill_distiller(palette = "Blues", direction = 1) +
+  labs(x = "T fall", y = NULL, fill = "Mean pp") +
+  facet_wrap(~station_name) +
+  theme_minimal()
+
+```
+### All but last n years
+
+```{r}
+file_list <- Sys.glob("daily_pp/HD01D_Data_0*")
+
+pp <- purrr::map(file_list, fread) |> 
+  rbindlist() |> 
+  _[, date := lubridate::make_date(year_s, month_s, day_s)] |> 
+  _[, .(date, site_number = station_number, pp)]
 
 
+obs_new <- pp[obs, on = .NATURAL] |> 
+  _[!is.na(pp)]
+
+obs_new |> 
+  metadata[i = _, on = .NATURAL] |> 
+  _[latitude > -30 & pp < 1000] |>
+  ggplot(aes(delta_t, pp)) +
+  geom_point() +
+  geom_smooth() +
+  facet_wrap(~site_number)
+```
 
 
+### Subdaily precipitation
+
+Melbourne station
+
+```{r}
+stations <- c(86338, 86071)
+
+mel <- purrr::map(Sys.glob(paste0("subdaily_pp/HD01D_Data_0", stations, "*")), 
+                  function(f) {
+      fread(f, skip = 1, 
+      col.names = c("hd", "station_number", "year", "month", "day", "hour", "minutes",
+                    "year_s", "month_s", "day_s", "hour_s", "minutes_s", "pp", "qc", "period", "rm")) |> 
+                      _[, .(station_number, year, month, day, hour, minutes, pp)]
+}) |> 
+  rbindlist() |> 
+  _[, time := make_datetime(year, month, day, hour, minutes, tz = "UTC")] |> 
+  _[!is.na(pp)] |> 
+  unique(by = c("year", "month", "day", "hour", "minutes")) |>
+  
+  _[, time := time + hours(15)] |> 
+  _[pp < 50]
+```
+
+
+```{r}
+mel_roll <- mel |> 
+  _[, let(pp_15 = frollsum(pp, n = 15, align = "center", na.rm = TRUE),
+          pp_30 = frollsum(pp, n = 30, align = "center", na.rm = TRUE),
+          pp_60 = frollsum(pp, n = 60, align = "center", na.rm = TRUE))] |> 
+  _[, .(pp_15_max = max(pp_15, na.rm = TRUE),
+        pp_30_max = max(pp_30, na.rm = TRUE),
+        pp_60_max = max(pp_60, na.rm = TRUE)), by = .(date = as_date(time))]  |> 
+  # _[, time := make_date(year, month, day)] |> 
+  _[, station_number := "86338"]
+```
+
+
+```{r}
+obs_vic[site_number == 86338][mel_roll, on = "date"] |> 
+  _[month(date) %in% c(10, 11, 12, 1, 2, 3)] |>
+  _[, delta_td := cut_round(delta_t, breaks = seq(-30, 25, 2))] |> 
+  _[, .(mean_pp_60 = mean(pp_60_max, na.rm = TRUE),
+        mean_pp_30 = mean(pp_30_max, na.rm = TRUE),
+        mean_pp_15 = mean(pp_15_max, na.rm = TRUE)), by = .(delta_td)] |> 
+  melt(id.vars = "delta_td") |> 
+  ggplot(aes(delta_td, value)) +
+  geom_col(data = ~.x[variable == "mean_pp_60"], fill = "grey") +
+  geom_line(aes(color = variable)) +
+  scale_color_manual(values = c("orange", "cyan4", "steelblue")) +
+  labs(x = "T fall", y = "Daily mean maximun pp rate", color = "Accumulation") +
+  theme_minimal()
+```
+
+```{r}
+mel_ondjfm <- obs_vic[site_number == 86338][mel_roll, on = .NATURAL] |> 
+  _[month(date) %in% c(10, 11, 12, 1, 2, 3)] 
+
+percentiles <- quantile(mel_ondjfm[delta_t < 0]$delta_t, probs = c(0.05, 0.1, 0.2, 0.5))
+
+percentiles <- data.table(data.frame(percentiles), keep.rownames = TRUE)
+
+obs_vic[site_number == 86338][mel_roll, on = .NATURAL] |> 
+  _[month(date) %in% c(10, 11, 12, 1, 2, 3)] |>
+  _[, delta_td := cut_round(delta_t, breaks = seq(-30, 25, 2))] |> 
+  _[, .(mean_pp_60 = mean(pp_60_max, na.rm = TRUE)), by = .(delta_td)] |> 
+  # melt(id.vars = "delta_td") |> 
+  ggplot(aes(delta_td, mean_pp_60)) +
+  geom_col() +
+  geom_vline(xintercept = percentiles$percentiles, color = "orange") +
+  geom_label(data = percentiles, 
+             aes(label = rn, x = percentiles, y = 2), nudge_x = 0.8, size = 3) +
+  labs(x = "T fall", y = "Daily mean maximun pp rate") +
+  theme_minimal()
+```
+
+
+```{r}
+mel_percentiles <- obs_vic[site_number == 86338, .(date, delta_t, t_fall)][mel_roll, on = .NATURAL] |> 
+  _[month(date) %in% c(10, 11, 12, 1, 2, 3)] |> 
+  _[delta_t < 0, percentile := decil(delta_t)]  
+  
+
+mel_percentiles |> 
+  _[, .(p5 = sum(percentile <= 0.5, na.rm = TRUE),
+        p10 = sum(percentile <= 1, na.rm = TRUE),
+        p20 = sum(percentile <= 2, na.rm = TRUE),
+        p50 = sum(percentile <= 5, na.rm = TRUE))]
+
+p5_days <- mel_percentiles[percentile <= 0.5, date]
+p10_days <- mel_percentiles[percentile <= 1, date]
+
+mel[as_date(time) %in% as_date(p5_days)] |> 
+  # _[]
+  _[, let(id = floor_date(time, "day"))] |> 
+  _[, let(time = update(time, year = 2000, month = 1, day = 1) - hours(15))] |> 
+  # _[, .(pp_mean = mean(pp, na.rm = TRUE)), by = .(time)] |>
+  _[] |> 
+  ggplot(aes(time, pp_60)) +
+  geom_line(size = 0.1, aes(group = id)) +
+  scale_color_viridis_d() +
+  scale_x_datetime(date_labels = "%H:%M") +
+  labs(x = "Local time?", y = "Precipitation rate - 60' moving window (mm/h)",
+       title = "p5 ~ 100 events") +
+  theme_minimal()
+  
+# obs_vic[site_number == 86338] |> 
+#   _[date %in% as_date(p10_days)] |> 
+#   ggplot(aes(factor(date), pp)) +
+#   geom_point()
+# 
+# mel[as_date(time) %in% as_date(p10_days)] |> 
+#   _[, .(pp = sum(pp, na.rm = TRUE)), by = .(date = as_date(time))] |> 
+#   _[]
+```
+
+```{r}
+mel[as_date(time) %in% as_date(p10_days)] |> 
+  # _[]
+  _[, let(id = floor_date(time, "day"))] |> 
+  _[, let(time = update(time, year = 2000, month = 1, day = 1) - hours(15))] |> 
+  # _[, .(pp_mean = mean(pp, na.rm = TRUE)), by = .(time)] |>
+  _[] |> 
+  ggplot(aes(time, pp_60)) +
+  geom_line(size = 0.1, aes(group = id)) +
+  scale_color_viridis_d() +
+  scale_x_datetime(date_labels = "%H:%M") +
+  labs(x = "Local time?", y = "Precipitation rate - 60' moving window (mm/h)",
+       title = "p10 ~ 200 events") +
+  theme_minimal()
+```
+
+
+```{r}
+sub <- mel |>  
+  _[, .(pp_sub = sum(pp, na.rm = TRUE)), by = .(time = as_date(time))] |> 
+  _[]  
+  
+daily <- obs_vic[site_number == 86338, .(time = date, pp)]  |> 
+  _[]
+  
+daily[sub, on = .NATURAL] |> 
+   _[, let(diff = pp_sub - pp)] |> 
+  ggplot(aes(pp_sub, pp)) +
+  geom_point(aes(color = abs(diff) > 2))
+
+daily[sub, on = .NATURAL] |> 
+  _[, let(diff = pp_sub - pp)] |> 
+  _[abs(diff) > 2] |> 
+  _[order(-abs(diff))]
+
+```
 
 
 
