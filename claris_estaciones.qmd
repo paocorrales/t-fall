@@ -4,7 +4,6 @@ format: html
 editor: visual
 ---
 
-
 ```{r}
 library(siga)
 library(data.table)
@@ -62,7 +61,6 @@ claris |>
   theme_minimal()
 ```
 
-
 ```{r}
 claris |> 
   _[, .(n_front = sum(t_fall, na.rm = TRUE)), by = .(year(date), station_id)] |>
@@ -103,6 +101,7 @@ claris |>
   labs(x = NULL, y = NULL, title = "Mean days per year", color = NULL) +
   theme_minimal()
 ```
+
 ```{r}
 claris |> 
   _[delta_t < 0] |> 
@@ -140,7 +139,6 @@ claris_eof$right |>
   theme_minimal()
 ```
 
-
 ```{r}
 claris |> 
   # _[, let(pr_mean = mean(pr, na.rm = TRUE)), 
@@ -155,11 +153,9 @@ claris |>
 ```
 
 
-
-
-
-
-
-
-
+```{r}
+claris[station_id == 10156] |> 
+  ggplot(aes(delta_t, pr)) +
+  geom_point()
+```
 
