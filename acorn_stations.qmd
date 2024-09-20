@@ -9,6 +9,7 @@ library(data.table)
 library(ggplot2)
 library(metR)
 library(sf)
+library(lubridate)
 library(agroclimatico)
 
 file_list <- Sys.glob("acorn_sat_v2.5.0_daily_tmax/tmax*")
@@ -308,6 +309,8 @@ obs_new |>
 
 ### Subdaily precipitation
 
+#### delta_t --> pp
+
 Melbourne station
 
 ```{r}
@@ -385,7 +388,7 @@ obs_vic[site_number == 86338][mel_roll, on = .NATURAL] |>
 ```{r}
 mel_percentiles <- obs_vic[site_number == 86338, .(date, delta_t, t_fall)][mel_roll, on = .NATURAL] |> 
   _[month(date) %in% c(10, 11, 12, 1, 2, 3)] |> 
-  _[delta_t < 0, percentile := decil(delta_t)]  
+  _[delta_t < 0, percentile := agroclimatico::decil(delta_t)]  
   
 
 mel_percentiles |> 
@@ -458,6 +461,50 @@ daily[sub, on = .NATURAL] |>
 
 ```
 
+#### pp --> delta_t
+
+```{r}
+mel_pp10 <- mel |> 
+  _[, let(pp_10 = frollsum(pp, n = 60, align = "center", na.rm = TRUE))] |> 
+  _[, .(pp_10_max = max(pp_10, na.rm = TRUE)), by = .(date = as_date(time))]  |> 
+  # _[, time := make_date(year, month, day)] |> 
+  _[, station_number := "86338"] |> 
+  _[] |> 
+  obs_vic[site_number == 86338][i = _, on = .NATURAL] |> 
+  _[month(date) %in% c(10, 11, 12, 1, 2, 3)] 
+
+
+mel_pp10[, let(delta_td = cut_round(delta_t, seq(-30, 25, 1)),
+                 pp_10_maxd = cut_round(pp_10_max, seq(0, 50, 1)))] |> 
+  # _[pp_10_maxd >= 10] |> 
+  ggplot(aes(delta_td, pp_10_maxd)) +
+  annotate("rect", xmin = -25, xmax = 0, ymin = 10, ymax = Inf, fill = "grey90", alpha = 0.5) +
+  geom_bin_2d() +
+  # geom_hline(yintercept = 10) +
+  scale_fill_viridis_c(trans = 'log') +
+  labs(x = "T fall", y = "Precipitation rate - 60' moving window (mm/h)", fill = "# events") +
+  theme_minimal()
+```
+
+
+```{r}
+pp_max_10 <- mel_pp10 |> 
+  _[pp_10_maxd >= 7 & delta_t <= -10, date]
+
+mel[as_date(time) %in% as_date(pp_max_10)] |> 
+  # _[]
+  _[, let(id = floor_date(time, "day"))] |> 
+  _[, let(time = update(time, year = 2000, month = 1, day = 1) - hours(15))] |> 
+  # _[, .(pp_mean = mean(pp, na.rm = TRUE)), by = .(time)] |>
+  _[id == unique(id)[11]] |>
+  ggplot(aes(time, pp_10)) +
+  geom_point(size = 0.1, aes(color = factor(id))) +
+  geom_point(data = ~.x[, .SD[which.max(pp_10)], by = id], color = "red") +
+  scale_color_viridis_d() +
+  scale_x_datetime(date_labels = "%H:%M") +
+  labs(x = "Local time?", y = "Precipitation rate - 60' moving window (mm/h)") +
+  theme_minimal()
+```
 
 
 
