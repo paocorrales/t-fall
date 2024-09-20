@@ -9,6 +9,7 @@ library(data.table)
 library(ggplot2)
 library(metR)
 library(sf)
+library(agroclimatico)
 
 file_list <- Sys.glob("acorn_sat_v2.5.0_daily_tmax/tmax*")
 
@@ -120,7 +121,7 @@ obs[site_number %in% stations] |>
   _[site_number == 26021, .(site_number, year, n_front)] |> 
   _[, version := "v2.5"],
 
-mount_gambier <- fread("~/acorn_sat_v2.1.0_daily_tmax/tmax.026021.daily.csv") |> 
+mount_gambier <- fread("tmax.026021.daily.csv") |> 
       janitor::clean_names() |> 
     setnames("maximum_temperature_deg_c", "tmax") |> 
     _[, let(site_number = site_number[1],
