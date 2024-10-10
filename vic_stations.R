@@ -1,5 +1,14 @@
 library(data.table)
+library(lubridate)
+library(ggplot2)
 
+cut_round <- function(x, breaks) {
+  
+  labels <- na.omit((breaks + data.table::shift(breaks, -1))/2)
+  cuts <- cut(x, breaks = breaks, labels = labels)
+  
+  as.numeric(as.character(cuts))
+}
 
 stations <- readr::read_fwf("station_list.txt", skip = 4, guess_max = 5000) |> 
   setDT() |> 
@@ -27,13 +36,18 @@ mel <- purrr::map(Sys.glob(paste0("~/BoM_stations/sub-daily/1minute-rainfall_*/H
                       _[, time_local := make_datetime(year, month, day, hour, minutes, tz = "Australia/Melbourne")] |> 
                       _[, time_local := time_local + hours(15)] |>  #Move day to accumulate between 9 AM and 9 AM
                       _[, let(pp_60 = frollsum(pp, n = 60, align = "center", na.rm = TRUE))] |> 
-                      _[, .(pp_60_max = max(pp_60, na.rm = TRUE)), by = .(year(time_local), month(time_local), day(time_local), station_number)]  |> 
-                      _[, date_local := make_date(year, month, day)] 
+                      _[, .SD[which.max(pp_60)], by = .(year(time_local), month(time_local), day(time_local), station_number)] |> 
+                      _[, time_local := make_datetime(year, month, day, hour, tz = "Australia/Melbourne") - hours(15)] |> 
+                      _[, .(station_number, time_local, pp_60)]
                   }) |> 
   rbindlist() 
 
 
 readr::write_rds(mel, "daily_pprate.rds")
+
+mel <- readr::read_rds("daily_pprate.rds") |> 
+  _[, time_local := as_datetime(time_local, tz = "Australia/Melbourne")] |> 
+  _[, date := as_date(time_local)]
 
 t_mel <- fread("acorn_sat_v2.5.0_daily_tmax/tmax.086338.daily.csv") |> 
   janitor::clean_names() |> 
@@ -42,21 +56,35 @@ t_mel <- fread("acorn_sat_v2.5.0_daily_tmax/tmax.086338.daily.csv") |>
           site_name = site_name[1])] |>
   _[!is.na(date)] |> 
   _[, site_name := NULL] |> 
+  _[, date_tfall := as_date(date) - days(1)] |> 
   _[, let(delta_t = tmax - shift(tmax, n = 1)), by = site_number] |> 
   _[]
 
 
-t_mel[mel, on = c("date" = "date_local")] |> 
-  _[month %in% c(10, 11, 12, 1, 2, 3)] |> 
-  _[, delta_td := cut_round(delta_t, breaks = seq(-30, 25, 2))] |> 
-  _[, .(mean_pp = mean(pp_60_max, na.rm = TRUE)), by = .(delta_td)] |> 
-  # _[, date := date] |> 
-  # _[obs_vic[site_number == 86338], on = c("date")] |> 
-  # _[ pp == 0 & pp_60_max != 0 | pp != 0 & pp_60_max == 0]
+events <-  t_mel[mel, on = c("date_tfall" = "date")] |> 
+  _[month(date) %in% c(10, 11, 12, 1, 2, 3) & delta_t <= -10 & pp_60 >= 10] |> 
+  _[, .(mean_hour = round(median(hour(time_local))),
+          pp_60 = max(pp_60),
+        delta_t = max(delta_t)), by = date_tfall] 
+
+readr::write_rds(events, "events.rds")
+
+ t_mel[mel, on = c("date_tfall" = "date")] |> 
+  _[month(date) %in% c(10, 11, 12, 1, 2, 3)] |> 
+  _[, delta_td := cut_round(delta_t, breaks = seq(-30, 25, 1))] |> 
+  _[, .(mean_pp = mean(pp_60, na.rm = TRUE)), by = .(delta_td)] |> 
   ggplot(aes(delta_td, mean_pp)) +
   geom_col()
 
-t_mel[mel, on = c("date" = "date_local")] |> 
+events |> 
+  # _[, mean_hour := median(hour(time_local)), by = date_tfall]  |> 
+  ggplot(aes(factor(date_tfall), hour(time_local))) +
+  geom_point() +
+  geom_point(aes(y = mean_hour), color = "orange")
+ 
+events[, .N, by = date_tfall]
+ 
+t_mel[mel, on = c("date" = "time_local")] |> 
   # _[month %in% c(10, 11, 12, 1, 2, 3)] |> 
   ggplot(aes(delta_t, pp_60_max)) +
   geom_point() +
@@ -65,9 +93,9 @@ t_mel[mel, on = c("date" = "date_local")] |>
   facet_wrap(~month)
 
 
-t_mel[mel, on = c("date" = "date_local")] |> 
-  _[month %in% c(10, 11, 12, 1, 2, 3)] |>
-  _[delta_t <= -10 & pp_60_max >= 10] |> 
+t_mel[mel, on = c("date" = "time_local")] |> 
+  _[month(date) %in% c(10, 11, 12, 1, 2, 3)] |>
+  _[delta_t <= -10 & pp_60 >= 10] |> 
   _[, .N, by = .(station_number)] |> 
   stations[i = _, on = c("site" = "station_number")] |> 
   ggplot(aes(lon, lat)) +
