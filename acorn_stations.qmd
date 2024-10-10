@@ -324,7 +324,7 @@ mel <- purrr::map(Sys.glob(paste0("subdaily_pp/HD01D_Data_0", stations, "*")),
                       _[, .(station_number, year, month, day, hour, minutes, pp)]
 }) |> 
   rbindlist() |> 
-  _[, time := make_datetime(year, month, day, hour, minutes, tz = "UTC")] |> 
+  _[, time := make_datetime(year, month, day, hour, minutes, tz = "Australia/Melbourne")] |> 
   _[!is.na(pp)] |> 
   unique(by = c("year", "month", "day", "hour", "minutes")) |>
   
