@@ -1,0 +1,71 @@
+library(data.table)
+library(lubridate)
+library(rcdo)
+purrr::walk(Sys.glob(here::here("R/*")), source)
+
+# For each model/experiment
+# 
+file_list_cmip <- readr::read_rds(here::here("cmip_file_list_historical.rds")) |>
+  _[nominal_resolution != "500 km"]
+
+# Merge and regrid files and calculate deltat
+
+grid <- "/g/data/oi10/replicas/CMIP6/ScenarioMIP/CAS/FGOALS-g3/ssp370/r1i1p1f1/day/tasmax/gn/v20190820/tasmax_day_FGOALS-g3_ssp370_r1i1p1f1_gn_21000101-21001231.nc"
+
+purrr::map(11:nrow(file_list_cmip), function(m) {
+# future::plan(future::multisession, workers = 2)
+# furrr::future_map(1:nrow(file_list_cmip), function(m) {
+  
+  model <- file_list_cmip$source_id[m]
+  var <- file_list_cmip$variable_id[m]
+  member <- file_list_cmip$member_id[m]
+  experiment <- file_list_cmip$experiment_id[m]
+  grid_label <- file_list_cmip$grid_label[m]
+  
+  files <- file_list_cmip$file_list[[m]]
+  
+  file_list <- data.table(path = files, purrr::map_df(files, extract_range)) |> 
+    _[, merge := fifelse(inidate >= 1850 | enddate >= 2014, TRUE, FALSE)] |> 
+    _[merge == TRUE]
+  
+  message(paste0(".........", m, ".........."))
+  
+  outfile <- paste0("~/t-fall/data/cmip/historical/", "deltat_day_", model, "_", experiment, "_", member, "_", grid_label, "_20150101-21001231.nc")
+  dir.create(dirname(outfile), showWarnings = FALSE, recursive = TRUE)
+  
+  if (file.exists(outfile)) {
+    return(outfile)
+  }
+  
+  write(paste0("processing ", basename(outfile)), file = "~/log", append = TRUE)
+  message(paste0("processing ", basename(outfile)))
+  
+  if (nrow(file_list) == 1) {
+    
+    regridded <- cdo_seldate(file_list$path, startdate = "1850-01-01T00:00:00", enddate = "2014-12-31T23:00:00") |> 
+      cdo_remapbil(grid = grid) |> 
+      cdo_execute(options = "-L")
+    
+  } else {
+    
+    regridded <- cdo_mergetime(file_list$path) |> 
+      cdo_seldate(startdate = "1850-01-01T00:00:00", enddate = "2014-12-31T23:00:00") |>
+      cdo_remapbil(grid = grid) |>
+      cdo_execute(options = "-L")
+    
+  }
+  
+  cdo_deltat(regridded) |> 
+    cdo_shifttime(shiftValue = "-1days") |> 
+    cdo_execute(outfile, options = "-L")
+  
+  # shifted_f <- cdo_seldate(regridded, startdate = "2015-01-02", enddate = "2100-12-31") |>
+  #   cdo_execute(options = "-L")
+  # shifted_b <- cdo_seldate(regridded, startdate = "2015-01-01", enddate = "2100-12-30") |>
+  #   cdo_execute(options = "-L")
+  # 
+  # cdo_sub(shifted_f, shifted_b)
+})
+
+
+   
