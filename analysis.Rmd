@@ -1,0 +1,121 @@
+---
+title: "Cold front trends"
+output: html_document
+date: "2025-01-10"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(metR)
+library(ggplot2)
+library(data.table)
+library(lubridate)
+library(here)
+
+global_map <- rnaturalearth::ne_coastline()
+```
+
+## Data
+
+CMIP6, ScenarioMIP experiments from Tier 1. 
+
+```{r}
+data.frame(scenario_name = c("SSP5-8.5", "SSP3-7.0", "SPP2-4.5", "SSP1-2.6"),
+           forcing = c("High", "High", "Medium", "Low"),
+           forcing_value = c(8.5, 7.0, 4.5, 2.6)) |> 
+  knitr::kable(col.names = c("Scenario name", "Forcing category", "2100 forcing (Wm-2)"),
+               caption = "ScenarioMIP experiment design for Tier 1") |> 
+  kableExtra::kable_classic() 
+```
+
+
+```{r}
+readr::read_rds(here::here("cmip_file_list.rds")) |> 
+  _[nominal_resolution != "500 km", .(source_id, institution_id, nominal_resolution)] |> 
+  unique(by = "source_id") |> 
+  knitr::kable(col.names = c("Model", "Institution", "Original resolution"),
+               caption = "List of models used for the analysis.") |> 
+  kableExtra::kable_classic()
+```
+
+## Results
+
+### Frecuency of cold fronts
+
+```{r}
+# file_list <- Sys.glob(here("data/cmip/delta10/*"))
+# 
+# delta10 <- purrr::map(file_list, function(f) {
+#   
+#   message(basename(f))
+#   
+#   meta <- unglue::unglue(basename(f), "delta10_year_{model}_{scenario}_{member}_{ini}-{end}.nc")
+#   
+#   a <- ReadNetCDF(f, vars = "tasmax") |>
+#     _[, let(scenario = meta[[1]][["scenario"]],
+#             model = meta[[1]][["model"]])]
+#   
+#   
+# }) |>
+#   rbindlist()
+# 
+# serie <- delta10[, .(mean_freq = mean(tasmax, na.rm = TRUE)), by = .(year(time), scenario, lat, lon)]
+# 
+# fwrite(serie, here("data/cmip/series/serie_freq_year_delta10.csv"))
+
+serie <- fread(here("data/cmip/series/serie_freq_year_delta10.csv"))
+```
+
+
+```{r}
+serie |>
+  _[year != 2014] |>
+  _[lat %between% c(-38, -37) & lon == 144] |>
+  ggplot(aes(year, mean_freq)) +
+  geom_line(aes(color = scenario), alpha = 0.5) +
+  geom_smooth(method = "lm", aes(color = scenario), se = FALSE) +
+  labs(x = "Year", y = "Frequency (days/year)", color = NULL, 
+       title = "Grid point closest to Melburne") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+```{r}
+serie |> 
+  _[, .(mean_freq = mean(mean_freq, na.rm = TRUE)), by = .(scenario, lat, lon)] |> 
+  ggplot(aes(ConvertLongitude(lon), lat)) +
+  geom_contour_fill(aes(z = mean_freq, fill = after_stat(level))) +
+  scale_fill_viridis_d(guide = guide_colorbar(barheight = 0.5)) +
+  geom_sf(data = global_map, inherit.aes = FALSE, fill = NA, linewidth = 0.4) +
+  coord_sf(ylim = c(-50, 50), expand = FALSE) +
+  facet_wrap(~scenario) +
+  labs(x = NULL, y = NULL, fill = "days/year",
+       title = "Change in frequency") +
+  theme_minimal() +
+  theme(legend.position = "bottom",
+        legend.frame = ggplot2::element_rect(color = "black", linewidth = 0.4),
+        legend.key.width = grid::unit(1, 'null'))
+```
+
+
+
+```{r}
+serie |> 
+  _[lat %between% c(-50, 50)] |> 
+  _[, FitLm(mean_freq, year), by = .(scenario, lat, lon)] |> 
+  _[term == "year"] |>
+  ggplot(aes(ConvertLongitude(lon), lat)) +
+  geom_contour_fill(aes(z = estimate, fill = after_stat(level))) +
+  scale_fill_divergent_discretised(guide = guide_colorbar(barheight = 0.5)) +
+  geom_sf(data = global_map, inherit.aes = FALSE, fill = NA, linewidth = 0.4) +
+  coord_sf(ylim = c(-50, 50), expand = FALSE) +
+  facet_wrap(~scenario) +
+  labs(x = NULL, y = NULL, fill = "days/year",
+       title = "Change in frequency") +
+  theme_minimal() +
+  theme(legend.position = "bottom",
+        legend.frame = ggplot2::element_rect(color = "black", linewidth = 0.4),
+        legend.key.width = grid::unit(1, 'null'))
+```
+
