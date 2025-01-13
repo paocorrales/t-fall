@@ -70,13 +70,13 @@ serie <- fread(here("data/cmip/series/serie_freq_year_delta10.csv"))
 
 ```{r}
 serie |>
-  _[year != 2014] |>
+  _[!(year == 2014 & scenario != "historical")] |>
   _[lat %between% c(-38, -37) & lon == 144] |>
   ggplot(aes(year, mean_freq)) +
   geom_line(aes(color = scenario), alpha = 0.5) +
   geom_smooth(method = "lm", aes(color = scenario), se = FALSE) +
   labs(x = "Year", y = "Frequency (days/year)", color = NULL, 
-       title = "Grid point closest to Melburne") +
+       title = "Grid point closest to Melbourne") +
   theme_minimal() +
   theme(legend.position = "bottom")
 ```
