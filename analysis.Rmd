@@ -14,6 +14,8 @@ library(lubridate)
 library(here)
 
 global_map <- rnaturalearth::ne_coastline()
+
+discrete_colours <- c(Historical = "black", "SSP1-2.6" = "#16A9CA", "SSP2-4.5" = "#004C73", "SSP3-7.0" = "#EE7733", "SSP5-8.5" = "#CC3311") 
 ```
 
 ## Data
@@ -44,19 +46,19 @@ readr::read_rds(here::here("cmip_file_list.rds")) |>
 ### Frecuency of cold fronts
 
 ```{r}
-# file_list <- Sys.glob(here("data/cmip/delta10/*"))
-# 
+file_list <- Sys.glob(here("data/cmip/100km/delta1004*"))
+
 # delta10 <- purrr::map(file_list, function(f) {
-#   
+# 
 #   message(basename(f))
-#   
-#   meta <- unglue::unglue(basename(f), "delta10_year_{model}_{scenario}_{member}_{ini}-{end}.nc")
-#   
+# 
+#   meta <- unglue::unglue(basename(f), "delta1004_year_{model}_{scenario}_{member}_{date}.nc")
+#                                       
 #   a <- ReadNetCDF(f, vars = "tasmax") |>
 #     _[, let(scenario = meta[[1]][["scenario"]],
 #             model = meta[[1]][["model"]])]
-#   
-#   
+# 
+# 
 # }) |>
 #   rbindlist()
 # 
@@ -64,7 +66,18 @@ readr::read_rds(here::here("cmip_file_list.rds")) |>
 # 
 # fwrite(serie, here("data/cmip/series/serie_freq_year_delta10.csv"))
 
-serie <- fread(here("data/cmip/series/serie_freq_year_delta10.csv"))
+# serie <- purrr::map(Sys.glob(here("data/cmip/series/serie_freq_delta1004_*_100km.nc")), function(f) {
+serie <- purrr::map(Sys.glob(here("data/cmip/series/serie_freq_deltap99_*_100km.nc")), function(f) {
+  message(f)
+  
+  meta <- unglue::unglue(basename(f), "serie_freq_{threshold}_{scenario}_100km.nc")
+  ReadNetCDF(f, vars = c(mean_freq = "tasmax")) |> 
+    _[, let(year = year(time),
+            scenario = meta[[1]][["scenario"]])] |> 
+    _[, let(time = NULL)]
+  
+}) |> rbindlist() |> 
+  _[, let(scenario = factor(scenario, labels = c("Historical", "SSP1-2.6", "SSP2-4.5", "SSP3-7.0", "SSP5-8.5")))]
 ```
 
 
@@ -73,25 +86,36 @@ serie |>
   _[!(year == 2014 & scenario != "historical")] |>
   _[lat %between% c(-38, -37) & lon == 144] |>
   ggplot(aes(year, mean_freq)) +
-  geom_line(aes(color = scenario), alpha = 0.5) +
+  geom_line(aes(color = scenario), alpha = 0.3) +
   geom_smooth(method = "lm", aes(color = scenario), se = FALSE) +
+  scale_color_manual(values = discrete_colours) +
   labs(x = "Year", y = "Frequency (days/year)", color = NULL, 
        title = "Grid point closest to Melbourne") +
   theme_minimal() +
-  theme(legend.position = "bottom")
+  theme(legend.position = "bottom",
+        panel.background = element_rect(fill = "#fbfbfb", color = NA))
 ```
 
 ```{r}
 serie |> 
-  _[, .(mean_freq = mean(mean_freq, na.rm = TRUE)), by = .(scenario, lat, lon)] |> 
+  _[, let(period = fcase(year %between% c(1980, 2000), "1980-2000",
+                         year %between% c(2080, 2100), "2080-2100",
+                         default = NA))] |> 
+  _[!is.na(period)] |> 
+  _[, .(mean_freq = mean(mean_freq, na.rm = TRUE)), by = .(scenario, period, lat, lon)] |> 
+  _[, baseline := mean_freq[period == "1980-2000"], by = .(lon, lat)] |> 
+  _[period != "1980-2000"] |> 
   ggplot(aes(ConvertLongitude(lon), lat)) +
-  geom_contour_fill(aes(z = mean_freq, fill = after_stat(level))) +
-  scale_fill_viridis_d(guide = guide_colorbar(barheight = 0.5)) +
+  geom_contour_fill(aes(z = (mean_freq - baseline)/365*100, fill = after_stat(level)),
+                    breaks = c(-Inf, seq(-5, 5, 0.25), Inf)) +
+  scale_fill_divergent_discretised(guide = guide_colorsteps(barheight = 0.5),
+                                   labels = function(x) JumpBy(x, 2, fill = "")) +
   geom_sf(data = global_map, inherit.aes = FALSE, fill = NA, linewidth = 0.4) +
-  coord_sf(ylim = c(-50, 50), expand = FALSE) +
+  coord_sf(expand = FALSE) +
   facet_wrap(~scenario) +
-  labs(x = NULL, y = NULL, fill = "days/year",
-       title = "Change in frequency") +
+  labs(x = NULL, y = NULL, fill = "%",
+       title = "Change in frequency",
+       subtitle = "Difference 2080-2100 - 1980-2000") +
   theme_minimal() +
   theme(legend.position = "bottom",
         legend.frame = ggplot2::element_rect(color = "black", linewidth = 0.4),
@@ -101,21 +125,110 @@ serie |>
 
 
 ```{r}
-serie |> 
-  _[lat %between% c(-50, 50)] |> 
+trend <- serie |> 
+  _[!(year == 2014)] |>
+  _[scenario != "Historical"] |> 
   _[, FitLm(mean_freq, year), by = .(scenario, lat, lon)] |> 
-  _[term == "year"] |>
+  _[term == "year"] 
+
+trend |> 
   ggplot(aes(ConvertLongitude(lon), lat)) +
-  geom_contour_fill(aes(z = estimate, fill = after_stat(level))) +
-  scale_fill_divergent_discretised(guide = guide_colorbar(barheight = 0.5)) +
+  geom_contour_fill(aes(z = estimate*10, fill = after_stat(level)),
+                    breaks = c(-Inf, seq(-0.13, 0.13, 0.01)*10, Inf)) +
+  scale_fill_divergent_discretised(guide = guide_colorbar(barheight = 0.5),
+                                   labels = function(x) JumpBy(x, 2, fill = "")) +
   geom_sf(data = global_map, inherit.aes = FALSE, fill = NA, linewidth = 0.4) +
-  coord_sf(ylim = c(-50, 50), expand = FALSE) +
+  coord_sf(expand = FALSE) +
   facet_wrap(~scenario) +
-  labs(x = NULL, y = NULL, fill = "days/year",
-       title = "Change in frequency") +
+  labs(x = NULL, y = NULL, fill = "days/decade",
+       title = "Change in frequency",
+       subtitle = "Trend margnitude from linear regression") +
   theme_minimal() +
   theme(legend.position = "bottom",
         legend.frame = ggplot2::element_rect(color = "black", linewidth = 0.4),
         legend.key.width = grid::unit(1, 'null'))
 ```
 
+## Intensity of cold fronts
+
+```{r}
+serie_intensity <- purrr::map(Sys.glob(here("data/cmip/series/serie_intensity_max5*")), function(f) {
+  message(f)
+  
+  meta <- unglue::unglue(basename(f), "serie_intensity_max5_{scenario}_100km.nc")
+  ReadNetCDF(f, vars = c(mean_int = "tasmax")) |> 
+    _[, let(year = year(time),
+            scenario = meta[[1]][["scenario"]])] |> 
+    _[, let(time = NULL)]
+  
+}) |> rbindlist() |> 
+  _[, let(scenario = factor(scenario, labels = c("Historical", "SSP1-2.6", "SSP2-4.5", "SSP3-7.0", "SSP5-8.5")))]
+
+```
+
+```{r}
+serie_intensity |>
+  _[!(year == 2014 & scenario != "historical")] |>
+  _[lat %between% c(-38, -37) & lon == 144] |>
+  ggplot(aes(year, mean_int)) +
+  geom_line(aes(color = scenario), alpha = 0.3) +
+  geom_smooth(method = "lm", aes(color = scenario), se = FALSE) +
+  scale_color_manual(values = discrete_colours) +
+  labs(x = "Year", y = "Mean temperature drop", color = NULL, 
+       title = "Grid point closest to Melbourne") +
+  theme_minimal() +
+  theme(legend.position = "bottom",
+        panel.background = element_rect(fill = "#fbfbfb", color = NA))
+```
+
+```{r}
+serie_intensity |> 
+  _[, let(period = fcase(year %between% c(1980, 2000), "1980-2000",
+                         year %between% c(2080, 2100), "2080-2100",
+                         default = NA))] |> 
+  _[!is.na(period)] |> 
+  _[, .(mean_int = mean(mean_int, na.rm = TRUE)), by = .(scenario, period, lat, lon)] |> 
+  _[, baseline := mean_int[period == "1980-2000"], by = .(lon, lat)] |> 
+  _[period != "1980-2000"] |> 
+  ggplot(aes(ConvertLongitude(lon), lat)) +
+  geom_contour_fill(aes(z = (mean_int - baseline)/365*100, fill = after_stat(level)),
+                    breaks = c(-Inf, seq(-2.4, 2.4, 0.1), Inf)) +
+  scale_fill_divergent_discretised(guide = guide_colorsteps(barheight = 0.5),
+                                   labels = function(x) JumpBy(x, 2, fill = "")) +
+  geom_sf(data = global_map, inherit.aes = FALSE, fill = NA, linewidth = 0.4) +
+  coord_sf(expand = FALSE) +
+  facet_wrap(~scenario) +
+  labs(x = NULL, y = NULL, fill = "%",
+       title = "Change in frequency",
+       subtitle = "Difference 2080-2100 - 1980-2000") +
+  theme_minimal() +
+  theme(legend.position = "bottom",
+        legend.frame = ggplot2::element_rect(color = "black", linewidth = 0.4),
+        legend.key.width = grid::unit(1, 'null'))
+```
+
+
+```{r}
+trend <- serie_intensity |> 
+  _[!(year == 2014)] |>
+  _[scenario != "Historical"] |> 
+  _[, FitLm(mean_int, year), by = .(scenario, lat, lon)] |> 
+  _[term == "year"] 
+
+trend |> 
+  ggplot(aes(ConvertLongitude(lon), lat)) +
+  geom_contour_fill(aes(z = estimate*10, fill = after_stat(level)),
+                    breaks = c(-Inf, seq(-0.1, 0.1, 0.005)*10, Inf)) +
+  scale_fill_divergent_discretised(guide = guide_colorbar(barheight = 0.5),
+                                   labels = function(x) JumpBy(x, 2, fill = "")) +
+  geom_sf(data = global_map, inherit.aes = FALSE, fill = NA, linewidth = 0.4) +
+  coord_sf(expand = FALSE) +
+  facet_wrap(~scenario) +
+  labs(x = NULL, y = NULL, fill = "days/decade",
+       title = "Change in frequency",
+       subtitle = "Trend margnitude from linear regression") +
+  theme_minimal() +
+  theme(legend.position = "bottom",
+        legend.frame = ggplot2::element_rect(color = "black", linewidth = 0.4),
+        legend.key.width = grid::unit(1, 'null'))
+```
