@@ -11,7 +11,7 @@ purrr::walk(Sys.glob(here::here("R/*")), source)
 file_list <- Sys.glob("~/t-fall/data/cmip/100km/deltat_*historical*")
 percentiles <- c(0.1, 0.5,  1, 2, 2.5, 5, 7.5, 10)
 
-future::plan(future::multisession, workers = 2)
+future::plan(future::multisession, workers = 4)
 furrr::future_map(percentiles, function(percentile) {
   
   purrr::map(file_list, function(f) {
@@ -22,7 +22,7 @@ furrr::future_map(percentiles, function(percentile) {
     member <- meta[[1]][["member"]]
     experiment <- meta[[1]][["scenario"]]
     
-    outfile <- paste0("~/t-fall/data/cmip/percentiles/", "deltat_", model, "_", experiment, "_", member, "_p", 100 - percentile, "_1979-2014.nc")
+    outfile <- paste0("~/t-fall/data/cmip/percentiles/", "deltat_", model, "_", experiment, "_", member, "_p", 100 - percentile, "_1979-2014_season.nc")
     dir.create(dirname(outfile), showWarnings = FALSE, recursive = TRUE)
     
     if (file.exists(outfile)) {
@@ -34,13 +34,12 @@ furrr::future_map(percentiles, function(percentile) {
     period <- cdo_seldate(f, startdate = "1979-01-01T00:00:00", enddate = "2014-12-31T23:00:00") |>
       cdo_execute(options = "-L")
     
-    cdo_timpctl(period, cdo_timmin(period), cdo_timmax(period),  p = percentile) |> 
+    cdo_yseaspctl(period, cdo_yseasmin(period), cdo_yseasmax(period),  p = percentile) |> 
       cdo_execute(outfile, options = "-L")
     
   })
   
 })
-
 
 # file_list <- Sys.glob("~/t-fall/data/cmip/percentiles//deltat_*historical*")
 

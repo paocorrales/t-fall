@@ -30,7 +30,6 @@ library(rcdo)
 threshold <- "percentile"
 percentiles <- 100 - c(0.1, 0.5,  1, 2, 2.5, 5, 7.5, 10)
 
-
 # ReadNetCDF("/home/565/pc2687/t-fall/data/cmip/100km/deltat_day_AWI-CM-1-1-MR_ssp126_r1i1p1f1_gn_20150101-21001231.nc", 
 #            vars = "tasmax", subset = list(time = "1990-10-25")) |> 
 #   _[, let(land = MaskLand(lon, lat))] |> 
@@ -46,7 +45,7 @@ percentiles <- 100 - c(0.1, 0.5,  1, 2, 2.5, 5, 7.5, 10)
 file_list <- c(Sys.glob("~/t-fall/data/cmip/100km/deltat_day_*ssp585*"),
                Sys.glob("~/t-fall/data/cmip/100km/deltat_day_*hist*"))
 
-future::plan(future::multisession, workers = 2)
+future::plan(future::multisession, workers = 4)
 furrr::future_map(percentiles, function(p) {
   purrr::map(file_list, function(f) {
     
@@ -58,13 +57,14 @@ furrr::future_map(percentiles, function(p) {
     
     message(paste0("processing ", basename(f)))
     
-    outfile <- paste0("~/t-fall/data/cmip/100km/", "deltap", p, "_year_", model, "_", experiment, "_", member, "_20150101-21001231.nc")
-    dir.create(dirname(outfile), showWarnings = FALSE, recursive = TRUE)
+    outfile_DJF <- paste0("~/t-fall/data/cmip/100km/", "deltap", p, "_DJF_", model, "_", experiment, "_", member, "_20150101-21001231.nc")
+    outfile_JJA <- paste0("~/t-fall/data/cmip/100km/", "deltap", p, "_JJA_", model, "_", experiment, "_", member, "_20150101-21001231.nc")
+    dir.create(dirname(outfile_DJF), showWarnings = FALSE, recursive = TRUE)
     
-    write(paste0("processing ", basename(outfile)), file = "~/log", append = TRUE)
+    write(paste0("processing ", basename(outfile_DJF)), file = "~/log", append = TRUE)
     
-    if (file.exists(outfile)) {
-      return(outfile)
+    if (file.exists(outfile_DJF)) {
+      return(outfile_DJF)
     }
     
     if (threshold == "constant") {
@@ -75,7 +75,7 @@ furrr::future_map(percentiles, function(p) {
       
     } else if (threshold == "percentile") {
       
-      threshold_file <- Sys.glob(paste0("~/t-fall/data/cmip/percentiles/deltat_", model, "_historical_*_p", p, "_1979-2014.nc"))
+      threshold_file <- Sys.glob(paste0("~/t-fall/data/cmip/percentiles/deltat_", model, "_historical_*_p", p, "_1979-2014_season.nc"))
       
       if (length(threshold_file) == 0 || !file.exists(threshold_file)) {
         return(paste0("no percentile calcualted for this model ", model))
@@ -83,10 +83,19 @@ furrr::future_map(percentiles, function(p) {
       
       message(paste0("threshold: ", basename(threshold_file)))
       
-      cdo_le(f, threshold_file) |> 
-        # cdo_seassum() |>
-        cdo_yearsum() |>
-        cdo_execute(outfile, options = "-L")
+      th <- cdo_seldate(threshold_file, startdate = "2014-01-01T00:00:00", enddate = "2014-02-28T23:00:00") |> 
+        cdo_execute(options = "-L")
+      cdo_selseason(f, "DJF") |> 
+        cdo_le(th) |>
+        cdo_seassum() |>
+        cdo_execute(outfile_DJF, options = "-L")
+      
+      th <- cdo_seldate(threshold_file, startdate = "2014-06-01T00:00:00", enddate = "2014-08-31T23:00:00") |> 
+        cdo_execute(options = "-L")
+      cdo_selseason(f, "JJA") |> 
+        cdo_le(th) |> 
+        cdo_seassum() |>
+        cdo_execute(outfile_JJA, options = "-L")
       
     } else {  # land vs sea threshold
       
@@ -98,5 +107,4 @@ furrr::future_map(percentiles, function(p) {
     }
     
   })
-  
 })
